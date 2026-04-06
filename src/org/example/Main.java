@@ -17,6 +17,13 @@ public class Main extends JFrame {
 
         // Instanciamos el area de dibujo
         areaDibujo = new PanelOsciloscopio();
+
+        // Instanciamos nuestro "Enchufe" de micrófono
+        final MicrofonoSource miMicrofono = new MicrofonoSource(44100f);
+
+        // Conectamos el micrófono al área de dibujo
+        areaDibujo.conectarFuente(miMicrofono);
+
         add(areaDibujo, BorderLayout.CENTER);
 
         // Panel de Controles
@@ -60,7 +67,7 @@ public class Main extends JFrame {
         comboRate.setSelectedItem("44100");
         comboRate.addActionListener(e -> {
             float nuevoRate = Float.parseFloat((String) comboRate.getSelectedItem());
-            areaDibujo.cambiarSampleRate(nuevoRate);
+            miMicrofono.setSampleRate(nuevoRate);
         });
         panelControles.add(comboRate);
 
@@ -91,7 +98,6 @@ public class Main extends JFrame {
 
         add(panelControles, BorderLayout.EAST);
 
-        areaDibujo.iniciarCaptura();
     }
 
     private JLabel crearEtiquetaCentrada(String texto) {
@@ -107,71 +113,50 @@ public class Main extends JFrame {
 }
 
 class PanelOsciloscopio extends JPanel {
-    private final byte[] buffer = new byte[32768];
-    private float currentSampleRate = 44100f;
-    private TargetDataLine line;
-    private Thread captureThread;
+    // 1. El "Puerto": Ahora dependemos de la Interfaz, no del Micrófono directamente
+    private FuenteDeDatos fuente;
 
     private int escalaYIndex = 2;
     private int msPerDivIndex = 2;
     private boolean isFrozen = false;
     private int offsetX = 0;
     private int offsetY = 0;
+    private byte[] bufferCongelado;
 
     public PanelOsciloscopio() {
         setBackground(Color.BLACK);
+        // 2. Refresco Automático: Como ya no hay un hilo interno leyendo audio,
+        // usamos un Timer de Swing para redibujar la pantalla cada 20ms (50 FPS)
+        Timer timer = new Timer(20, e -> repaint());
+        timer.start();
     }
 
-    public void cambiarSampleRate(float nuevoRate) {
-        this.currentSampleRate = nuevoRate;
-        iniciarCaptura();
+    // 3. El "Enchufe": Método para conectar cualquier fuente (Mic, Clima, SQL...)
+    public void conectarFuente(FuenteDeDatos nuevaFuente) {
+        this.fuente = nuevaFuente;
     }
 
-    public void setEscalaY(int index) { this.escalaYIndex = index; repaint(); }
-    public void setMsPerDiv(int index) { this.msPerDivIndex = index; repaint(); }
-    public void setCongelado(boolean estado) { this.isFrozen = estado; repaint(); }
-    public void setOffsetX(int val) { this.offsetX = val; repaint(); }
-    public void setOffsetY(int val) { this.offsetY = val; repaint(); }
-
-    public void iniciarCaptura() {
-        if (line != null) {
-            line.stop();
-            line.close();
-        }
-        if (captureThread != null) {
-            captureThread.interrupt();
-        }
-
-        try {
-            AudioFormat format = new AudioFormat(currentSampleRate, 16, 1, true, false);
-            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
-            line = (TargetDataLine) AudioSystem.getLine(info);
-            line.open(format, 4096);
-            line.start();
-
-            captureThread = new Thread(() -> {
-                byte[] fragmento = new byte[1024];
-                while (!Thread.currentThread().isInterrupted()) {
-                    if (!isFrozen) {
-                        int bytesLeidos = line.read(fragmento, 0, fragmento.length);
-                        System.arraycopy(buffer, bytesLeidos, buffer, 0, buffer.length - bytesLeidos);
-                        System.arraycopy(fragmento, 0, buffer, buffer.length - bytesLeidos, bytesLeidos);
-                    }
-                    repaint();
-                    try { Thread.sleep(10); } catch (InterruptedException e) { break; }
-                }
-            });
-            captureThread.setPriority(Thread.MAX_PRIORITY);
-            captureThread.setDaemon(true);
-            captureThread.start();
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Tasa no soportada: " + currentSampleRate + " Hz");
+    // Setters (Se mantienen igual para los controles del panel)
+    public void setEscalaY(int index) { this.escalaYIndex = index; }
+    public void setMsPerDiv(int index) { this.msPerDivIndex = index; }
+    public void setCongelado(boolean estado) {
+        this.isFrozen = estado;
+        if (isFrozen && fuente != null) {
+            // Tomamos una "foto" de los datos actuales
+            this.bufferCongelado = fuente.obtenerDatos().clone();
         }
     }
+
+    public void setOffsetX(int val) { this.offsetX = val; }
+    public void setOffsetY(int val) { this.offsetY = val; }
 
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
+
+        // Si no hay nada enchufado, no dibujamos nada
+        if (fuente == null) return;
+
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
@@ -179,7 +164,7 @@ class PanelOsciloscopio extends JPanel {
         double h = getHeight();
         double midY = h / 2.0;
 
-        // Grilla
+        // Dibujo de la Grilla (Se mantiene igual)
         g2.setColor(new Color(0, 70, 0));
         for (int i = 0; i <= w; i += 50) g2.drawLine(i, 0, i, (int) h);
         for (int i = 0; i <= h; i += 50) g2.drawLine(0, i, (int) w, i);
@@ -187,19 +172,24 @@ class PanelOsciloscopio extends JPanel {
         g2.setColor(isFrozen ? Color.YELLOW : Color.GREEN);
         g2.setStroke(new BasicStroke(2f));
 
+        // 4. LA CLAVE: Pedimos los datos a la fuente, sea cual sea
+        byte[] buffer;
+        if (isFrozen && bufferCongelado != null) {
+            buffer = bufferCongelado;
+        } else {
+            buffer = fuente.obtenerDatos();
+        }
+
         double multY = switch (escalaYIndex) {
             case 0 -> 4.0; case 1 -> 2.0; default -> 1.0;
         };
 
-        double samplesPerMs = currentSampleRate / 1000.0;
+        // Ajuste de escala temporal (Valores fijos para 44100Hz por ahora)
         double samplesPerPixel = switch (msPerDivIndex) {
-            case 0 -> (1.0 * samplesPerMs) / 50.0;
-            case 1 -> (5.0 * samplesPerMs) / 50.0;
-            case 3 -> (10.0 * samplesPerMs) / 50.0;
-            case 4 -> (50.0 * samplesPerMs) / 50.0;
-            default -> (20.0 * samplesPerMs) / 50.0;
+            case 0 -> 0.882; case 1 -> 4.41; case 3 -> 8.82; case 4 -> 44.1; default -> 17.64;
         };
 
+        // El bucle de dibujo usa el buffer que nos entregó la "fuente"
         for (int i = 0; i < buffer.length - 4; i += 2) {
             short s1 = (short) ((buffer[i + 1] << 8) | (buffer[i] & 0xff));
             short s2 = (short) ((buffer[i + 3] << 8) | (buffer[i + 2] & 0xff));

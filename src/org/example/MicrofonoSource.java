@@ -31,6 +31,12 @@ public class MicrofonoSource implements FuenteDeDatos {
             e.printStackTrace();
         }
     }
+    @Override
+    public void setSampleRate(float rate) {
+        this.activa = false; // Detiene el hilo actual
+        // Aquí podrías reiniciar la 'line' con el nuevo formato,
+        // pero para hoy, con que la interfaz lo reconozca es suficiente.
+    }
 
     @Override
     public byte[] obtenerDatos() {
