@@ -6,8 +6,9 @@ import java.awt.*;
 import javax.sound.sampled.*;
 
 public class Main extends JFrame {
-    private final PanelOsciloscopio areaDibujo;
+    private PanelOsciloscopio areaDibujo;
     private boolean congelado = false;
+    private FuenteDeDatos miFuente;
 
     public Main() {
         setTitle("Osciloscopio Profesional - Calibrado");
@@ -18,11 +19,7 @@ public class Main extends JFrame {
         // Instanciamos el area de dibujo
         areaDibujo = new PanelOsciloscopio();
 
-        // Instanciamos nuestro "Enchufe" de micrófono
-        final MicrofonoSource miMicrofono = new MicrofonoSource(44100f);
-
-        // Conectamos el micrófono al área de dibujo
-        areaDibujo.conectarFuente(miMicrofono);
+        configurarEntrada("WAV");
 
         add(areaDibujo, BorderLayout.CENTER);
 
@@ -67,11 +64,31 @@ public class Main extends JFrame {
         comboRate.setSelectedItem("44100");
         comboRate.addActionListener(e -> {
             float nuevoRate = Float.parseFloat((String) comboRate.getSelectedItem());
-            miMicrofono.setSampleRate(nuevoRate);
+            miFuente.setSampleRate(nuevoRate);
         });
         panelControles.add(comboRate);
 
         panelControles.add(Box.createRigidArea(new Dimension(0, 20)));
+
+        // --- SELECTOR DE ENTRADA (BOTONES) ---
+        panelControles.add(crearEtiquetaCentrada("ENTRADA DE SEÑAL:"));
+
+        // Botón para el Micrófono
+        JButton btnMic = new JButton("🎙️ MICRÓFONO");
+        btnMic.setAlignmentX(Component.CENTER_ALIGNMENT);
+        btnMic.addActionListener(e -> configurarEntrada("MIC"));
+        panelControles.add(btnMic);
+
+        panelControles.add(Box.createRigidArea(new Dimension(0, 10))); // Espacio
+
+        // Botón para el Archivo WAV
+        JButton btnWav = new JButton("📁 ARCHIVO WAV");
+        btnWav.setAlignmentX(Component.CENTER_ALIGNMENT);
+        btnWav.addActionListener(e -> configurarEntrada("WAV"));
+        panelControles.add(btnWav);
+
+        panelControles.add(Box.createRigidArea(new Dimension(0, 20))); // Espacio
+
 
         // SELECTOR Y (VOLTAJE)
         panelControles.add(crearEtiquetaCentrada("Sensibilidad (Y):"));
@@ -99,6 +116,19 @@ public class Main extends JFrame {
         add(panelControles, BorderLayout.EAST);
 
     }
+
+    public void configurarEntrada(String tipo) {
+        if (tipo.equals("MIC")) {
+            miFuente = new MicrofonoSource(44100f);
+        } else if (tipo.equals("WAV")) {
+            miFuente = new ArchivoWAVSource("test.wav");
+        }
+
+        if (miFuente != null) {
+            areaDibujo.conectarFuente(miFuente);
+        }
+    }
+
 
     private JLabel crearEtiquetaCentrada(String texto) {
         JLabel l = new JLabel(texto);
@@ -204,4 +234,6 @@ class PanelOsciloscopio extends JPanel {
             }
         }
     }
+
+
 }
